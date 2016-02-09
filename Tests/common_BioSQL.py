@@ -420,6 +420,86 @@ class SeqInterfaceTest(unittest.TestCase):
         self.assertTrue("GI:16354" in multi_ann)
         self.assertTrue("SWISS-PROT:P31169" in multi_ann)
 
+class TaxonomyTest(unittest.TestCase):
+    def setUp(self):
+        # create TESTDB
+        create_database()
+
+        # load the database
+        db_name = "biosql-test"
+        self.server = BioSeqDatabase.open_database(driver=DBDRIVER,
+                                                   user=DBUSER, passwd=DBPASSWD,
+                                                   host=DBHOST, db=TESTDB)
+
+        # remove the database if it already exists
+        try:
+            self.server[db_name]
+            self.server.remove_database(db_name)
+        except KeyError:
+            pass
+
+        self.db = self.server.new_database(db_name)
+
+        # get the GenBank file we are going to put into it
+        self.iterator = SeqIO.parse("GenBank/cor6_6.gb", "gb")
+
+    def tearDown(self):
+        self.server.close()
+        destroy_database()
+        del self.db
+        del self.server
+
+    def test_load_database_with_tax_lookup(self):
+        """Load SeqRecord objects and fetch the taxonomy information from NCBI.
+        """
+
+        from Bio import Entrez
+        Entrez.email = "biopython-dev@biopython.org"
+
+        handle = Entrez.efetch( db="taxonomy", id=3702, retmode="XML")
+
+        taxon_record = Entrez.read(handle)
+        entrez_tax = []
+        for t in taxon_record[0]['LineageEx']:
+            entrez_tax.append(t['ScientificName'])
+
+        self.db.load(self.iterator, True)
+
+        # do some simple tests to make sure we actually loaded the right
+        # thing. More advanced tests in a different module.
+        items = list(self.db.values())
+        self.assertEqual(len(items), 6)
+        self.assertEqual(len(self.db), 6)
+
+
+        test_record = self.db.lookup(accession="X55053")
+
+        # make sure that the ncbi taxonomy id is corrent
+        self.assertEqual(test_record.annotations['ncbi_taxid'], 3702)
+        # make sure that the taxonomic lineage is the same as reported
+        # using the Entrez module
+        self.assertEqual(test_record.annotations['taxonomy'][:-1],
+                entrez_tax)
+
+    def test_taxon_left_right_values(self):
+        self.db.load(self.iterator, True)
+        sql = """SELECT DISTINCT include.ncbi_taxon_id FROM taxon
+                  INNER JOIN taxon AS include ON
+                      (include.left_value BETWEEN taxon.left_value
+                                  AND taxon.right_value)
+                  WHERE taxon.taxon_id IN
+                      (SELECT taxon_id FROM taxon_name
+                                  WHERE name LIKE '%Brassicales%')
+                      AND include.right_value - include.left_value == 1"""
+
+        rows = self.db.adaptor.execute_and_fetch_col0(sql)
+        self.assertEqual(4, len(rows))
+        self.assertEqual(set([3704, 3711, 3708, 3702]), set(rows))
+
+        #for row in self.db.adaptor.execute_and_fetchall('select taxon.taxon_id, taxon.ncbi_taxon_id, taxon.parent_taxon_id, taxon.node_rank, taxon.left_value, taxon.right_value, taxon_name.name  from taxon join taxon_name on taxon.taxon_id=taxon_name.taxon_id where taxon_name.name_class=\'scientific name\''):
+            #print(row)
+
+
 
 class LoaderTest(unittest.TestCase):
     """Load a database from a GenBank file."""
@@ -474,37 +554,6 @@ class LoaderTest(unittest.TestCase):
         self.assertEqual(item_ids, ['AF297471.1', 'AJ237582.1', 'L31939.1',
                                     'M81224.1', 'X55053.1', 'X62281.1'])
 
-    def test_load_database_with_tax_lookup(self):
-        """Load SeqRecord objects and fetch the taxonomy information from NCBI.
-        """
-
-        from Bio import Entrez
-        Entrez.email = "biopython-dev@biopython.org"
-
-        handle = Entrez.efetch( db="taxonomy", id=3702, retmode="XML")
-
-        taxon_record = Entrez.read(handle)
-        entrez_tax = []
-        for t in taxon_record[0]['LineageEx']:
-            entrez_tax.append(t['ScientificName'])
-
-        self.db.load(self.iterator, True)
-
-        # do some simple tests to make sure we actually loaded the right
-        # thing. More advanced tests in a different module.
-        items = list(self.db.values())
-        self.assertEqual(len(items), 6)
-        self.assertEqual(len(self.db), 6)
-
-
-        test_record = self.db.lookup(accession="X55053")
-
-        # make sure that the ncbi taxonomy id is corrent
-        self.assertEqual(test_record.annotations['ncbi_taxid'], 3702)
-        # make sure that the taxonomic lineage is the same as reported
-        # using the Entrez module
-        self.assertEqual(test_record.annotations['taxonomy'],
-                entrez_tax)
 
 
 
