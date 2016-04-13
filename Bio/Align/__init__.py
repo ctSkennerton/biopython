@@ -128,6 +128,7 @@ class MultipleSeqAlignment(_Alignment):
         >>> from Bio.Alphabet import generic_dna
         >>> from Bio.Seq import Seq
         >>> from Bio.SeqRecord import SeqRecord
+        >>> from Bio.Align import MultipleSeqAlignment
         >>> a = SeqRecord(Seq("AAAACGT", generic_dna), id="Alpha")
         >>> b = SeqRecord(Seq("AAA-CGT", generic_dna), id="Beta")
         >>> c = SeqRecord(Seq("AAAAGGT", generic_dna), id="Gamma")
@@ -313,7 +314,7 @@ class MultipleSeqAlignment(_Alignment):
         self._records.append(record)
 
     def __add__(self, other):
-        """Combines to alignments with the same number of rows by adding them.
+        """Combines two alignments with the same number of rows by adding them.
 
         If you have two multiple sequence alignments (MSAs), there are two ways to think
         about adding them - by row or by column. Using the extend method adds by row.

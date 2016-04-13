@@ -36,8 +36,8 @@ from seq_tests_common import compare_record, compare_records
 if __name__ == "__main__":
     raise RuntimeError("Call this via test_BioSQL_*.py not directly")
 
-global DBDRIVER, DBTYPE, DBHOST, DBUSER, DBPASSWD, TESTDB, DBSCHEMA, SQL_FILE
-global SYSTEM
+# Exporting these to the test_BioSQL_XXX.py files which import this file:
+# DBDRIVER, DBTYPE, DBHOST, DBUSER, DBPASSWD, TESTDB, DBSCHEMA, SQL_FILE, SYSTEM
 
 SYSTEM = platform.system()
 
@@ -158,7 +158,7 @@ def create_database():
                 time.sleep(1)
                 try:
                     os.remove(TESTDB)
-                except:
+                except Exception:
                     # Seen this with PyPy 2.1 (and older) on Windows -
                     # which suggests an open handle still exists?
                     print("Could not remove %r" % TESTDB)
@@ -211,6 +211,114 @@ def load_database(gb_filename_or_handle):
     server.commit()
     server.close()
     return count
+
+def load_multi_database(gb_filename_or_handle, gb_filename_or_handle2):
+    """Load two GenBank files into a new BioSQL database as different subdatabases.
+
+    This is useful for running tests against a newly created database.
+    """
+
+    create_database()
+    # now open a connection to load the database
+    db_name = "biosql-test"
+    db_name2 = "biosql-test2"
+    server = BioSeqDatabase.open_database(driver=DBDRIVER,
+                                          user=DBUSER, passwd=DBPASSWD,
+                                          host=DBHOST, db=TESTDB)
+    db = server.new_database(db_name)
+
+    # get the GenBank file we are going to put into it
+    iterator = SeqIO.parse(gb_filename_or_handle, "gb")
+    count = db.load(iterator)
+
+    db = server.new_database(db_name2)
+
+    # get the GenBank file we are going to put into it
+    iterator = SeqIO.parse(gb_filename_or_handle2, "gb")
+    # finally put it in the database
+    count2 = db.load(iterator)
+    server.commit()
+
+    server.close()
+    return count + count2
+
+
+class MultiReadTest(unittest.TestCase):
+    """Test reading a database with multiple namespaces."""
+
+    loaded_db = 0
+
+    def setUp(self):
+        """Connect to and load up the database.
+        """
+        load_multi_database("GenBank/cor6_6.gb", "GenBank/NC_000932.gb")
+
+        self.server = BioSeqDatabase.open_database(driver=DBDRIVER,
+                                                   user=DBUSER,
+                                                   passwd=DBPASSWD,
+                                                   host=DBHOST,
+                                                   db=TESTDB)
+
+        self.db = self.server["biosql-test"]
+        self.db2 = self.server['biosql-test2']
+
+    def tearDown(self):
+        self.server.close()
+        destroy_database()
+        del self.db
+        del self.db2
+        del self.server
+
+    def test_server(self):
+        """Check BioSeqDatabase methods"""
+        server = self.server
+        self.assertTrue("biosql-test" in server)
+        self.assertTrue("biosql-test2" in server)
+        self.assertEqual(2, len(server))
+        self.assertEqual(["biosql-test", 'biosql-test2'], list(server.keys()))
+        # Check we can delete the namespace...
+        del server["biosql-test"]
+        del server["biosql-test2"]
+        self.assertEqual(0, len(server))
+        try:
+            del server["non-existant-name"]
+            assert False, "Should have raised KeyError"
+        except KeyError:
+            pass
+
+    def test_get_db_items(self):
+        """Check list, keys, length etc"""
+        db = self.db
+        items = list(db.values())
+        keys = list(db)
+        l = len(items)
+        self.assertEqual(l, len(db))
+        self.assertEqual(l, len(list(db.items())))
+        self.assertEqual(l, len(list(db)))
+        self.assertEqual(l, len(list(db.values())))
+        for (k1, r1), (k2, r2) in zip(zip(keys, items), db.items()):
+            self.assertEqual(k1, k2)
+            self.assertEqual(r1.id, r2.id)
+        for k in keys:
+            del db[k]
+        self.assertEqual(0, len(db))
+        try:
+            del db["non-existant-name"]
+            assert False, "Should have raised KeyError"
+        except KeyError:
+            pass
+
+    def test_cross_retrieval_of_items(self):
+        """Test that valid ids can't be retrieved between namespaces.
+        """
+        db = self.db
+        db2 = self.db2
+        for db2_id in db2.keys():
+            try:
+                rec = db[db2_id]
+                assert False, "Should have raised KeyError"
+            except KeyError:
+                pass
 
 
 class ReadTest(unittest.TestCase):
@@ -449,38 +557,6 @@ class TaxonomyTest(unittest.TestCase):
         del self.db
         del self.server
 
-    def test_load_database_with_tax_lookup(self):
-        """Load SeqRecord objects and fetch the taxonomy information from NCBI.
-        """
-
-        from Bio import Entrez
-        Entrez.email = "biopython-dev@biopython.org"
-
-        handle = Entrez.efetch( db="taxonomy", id=3702, retmode="XML")
-
-        taxon_record = Entrez.read(handle)
-        entrez_tax = []
-        for t in taxon_record[0]['LineageEx']:
-            entrez_tax.append(t['ScientificName'])
-
-        self.db.load(self.iterator, True)
-
-        # do some simple tests to make sure we actually loaded the right
-        # thing. More advanced tests in a different module.
-        items = list(self.db.values())
-        self.assertEqual(len(items), 6)
-        self.assertEqual(len(self.db), 6)
-
-
-        test_record = self.db.lookup(accession="X55053")
-
-        # make sure that the ncbi taxonomy id is corrent
-        self.assertEqual(test_record.annotations['ncbi_taxid'], 3702)
-        # make sure that the taxonomic lineage is the same as reported
-        # using the Entrez module
-        self.assertEqual(test_record.annotations['taxonomy'][:-1],
-                entrez_tax)
-
     def test_taxon_left_right_values(self):
         self.db.load(self.iterator, True)
         sql = """SELECT DISTINCT include.ncbi_taxon_id FROM taxon
@@ -555,6 +631,66 @@ class LoaderTest(unittest.TestCase):
                                     'M81224.1', 'X55053.1', 'X62281.1'])
 
 
+class DeleteTest(unittest.TestCase):
+    """Test proper deletion of entries from a database."""
+
+    loaded_db = 0
+
+    def setUp(self):
+        """Connect to and load up the database.
+        """
+        load_database("GenBank/cor6_6.gb")
+
+        self.server = BioSeqDatabase.open_database(driver=DBDRIVER,
+                                                   user=DBUSER,
+                                                   passwd=DBPASSWD,
+                                                   host=DBHOST,
+                                                   db=TESTDB)
+
+        self.db = self.server["biosql-test"]
+
+    def tearDown(self):
+        self.server.close()
+        destroy_database()
+        del self.db
+        del self.server
+
+    def test_server(self):
+        """Check BioSeqDatabase methods"""
+        server = self.server
+        self.assertTrue("biosql-test" in server)
+        self.assertEqual(1, len(server))
+        self.assertEqual(["biosql-test"], list(server.keys()))
+        # Check we can delete the namespace...
+        del server["biosql-test"]
+        self.assertEqual(0, len(server))
+        try:
+            del server["non-existant-name"]
+            assert False, "Should have raised KeyError"
+        except KeyError:
+            pass
+
+    def test_del_db_items(self):
+        """Check all associated data is delete from an item"""
+        db = self.db
+        items = list(db.values())
+        keys = list(db)
+        l = len(items)
+
+        for seq_id in self.db.keys():
+            sql = "SELECT seqfeature_id from seqfeature where bioentry_id = '%s'"
+            # get the original number of seqfeatures associated with the bioentry
+            seqfeatures = self.db.adaptor.execute_and_fetchall(sql % (seq_id))
+
+            del db[seq_id]
+            # check to see that the entry in the bioentry table is removed
+            self.assertEqual(seq_id in db, False)
+
+            # no need to check seqfeature presence if it had none to begin with
+            if len(seqfeatures):
+                rows_d = self.db.adaptor.execute_and_fetchall(sql % (seq_id))
+                # check to see that associated data is removed
+                self.assertEqual(len(rows_d), 0)
 
 
 class DupLoadTest(unittest.TestCase):

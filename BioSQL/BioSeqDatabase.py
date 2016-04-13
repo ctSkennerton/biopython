@@ -1,5 +1,5 @@
 # Copyright 2002 by Andrew Dalke.  All rights reserved.
-# Revisions 2007-2014 copyright by Peter Cock.  All rights reserved.
+# Revisions 2007-2016 copyright by Peter Cock.  All rights reserved.
 # Revisions 2009 copyright by Cymon J. Cox.  All rights reserved.
 # Revisions 2013-2014 copyright by Tiago Antao.  All rights reserved.
 # This code is part of the Biopython distribution and governed by its
@@ -124,6 +124,11 @@ def open_database(driver="MySQLdb", **kwargs):
                           "new records.", BiopythonWarning)
             global _POSTGRES_RULES_PRESENT
             _POSTGRES_RULES_PRESENT = True
+
+    elif driver == 'sqlite3':
+        # Tell SQLite that we want to use foreign keys
+        # https://www.sqlite.org/foreignkeys.html#fk_enable
+        server.adaptor.execute('PRAGMA foreign_keys = ON')
 
     return server
 
@@ -631,15 +636,15 @@ class BioSeqDatabase(object):
         return list(self.keys())
 
     def __getitem__(self, key):
-        if key not in self:
-            raise KeyError(key)
-
-        return BioSeq.DBSeqRecord(self.adaptor, key)
+        record = BioSeq.DBSeqRecord(self.adaptor, key)
+        if record._biodatabase_id != self.dbid:
+            raise KeyError("Entry %r does exist, but not in current name space" % key)
+        return record
 
     def __delitem__(self, key):
         """Remove an entry and all its annotation."""
         if key not in self:
-            raise KeyError(key)
+            raise KeyError("Entry %r cannot be deleted. It was not found or is invalid" % key)
         # Assuming this will automatically cascade to the other tables...
         sql = "DELETE FROM bioentry " + \
               "WHERE biodatabase_id=%s AND bioentry_id=%s;"
@@ -777,7 +782,7 @@ class BioSeqDatabase(object):
                 else:
                     accession = cur_record.id
                     version = 0
-                gi = cur_record.annotations.get("gi", None)
+                gi = cur_record.annotations.get("gi")
                 sql = "SELECT bioentry_id FROM bioentry WHERE (identifier " + \
                       "= '%s' AND biodatabase_id = '%s') OR (accession = " + \
                       "'%s' AND version = '%s' AND biodatabase_id = '%s')"

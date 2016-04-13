@@ -61,8 +61,9 @@ class MMCIFParser(object):
         with warnings.catch_warnings():
             if self.QUIET:
                 warnings.filterwarnings("ignore", category=PDBConstructionWarning)
-        self._mmcif_dict = MMCIF2Dict(filename)
-        self._build_structure(structure_id)
+            self._mmcif_dict = MMCIF2Dict(filename)
+            self._build_structure(structure_id)
+
         return self._structure_builder.get_structure()
 
     # Private methods
@@ -76,7 +77,7 @@ class MMCIFParser(object):
         except KeyError:
             element_list = None
         seq_id_list = mmcif_dict["_atom_site.label_seq_id"]
-        chain_id_list = mmcif_dict["_atom_site.label_asym_id"]
+        chain_id_list = mmcif_dict["_atom_site.auth_asym_id"]
         x_list = [float(x) for x in mmcif_dict["_atom_site.Cartn_x"]]
         y_list = [float(x) for x in mmcif_dict["_atom_site.Cartn_y"]]
         z_list = [float(x) for x in mmcif_dict["_atom_site.Cartn_z"]]
@@ -119,7 +120,7 @@ class MMCIFParser(object):
         # Historically, Biopython PDB parser uses model_id to mean array index
         # so serial_id means the Model ID specified in the file
         current_model_id = -1
-        current_serial_id = 0
+        current_serial_id = -1
         for i in range(0, len(atom_id_list)):
 
             # set the line_counter for 'ATOM' lines only and not
@@ -135,7 +136,7 @@ class MMCIFParser(object):
             altloc = alt_list[i]
             if altloc == ".":
                 altloc = " "
-            resseq = seq_id_list[i]
+            int_resseq = int(seq_id_list[i])
             icode = icode_list[i]
             if icode == "?":
                 icode = " "
@@ -154,6 +155,9 @@ class MMCIFParser(object):
                 hetatm_flag = "H"
             else:
                 hetatm_flag = " "
+
+            resseq = (hetatm_flag, int_resseq, icode)
+
             if serial_list is not None:
                 # model column exists; use it
                 serial_id = serial_list[i]
@@ -171,10 +175,10 @@ class MMCIFParser(object):
             if current_chain_id != chainid:
                 current_chain_id = chainid
                 structure_builder.init_chain(current_chain_id)
+                current_residue_id = None
 
             if current_residue_id != resseq:
                 current_residue_id = resseq
-                int_resseq = int(resseq)
                 structure_builder.init_residue(resname, hetatm_flag, int_resseq, icode)
 
             coord = numpy.array((x, y, z), 'f')

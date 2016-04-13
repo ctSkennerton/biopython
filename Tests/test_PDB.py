@@ -55,21 +55,16 @@ class A_ExceptionTest(unittest.TestCase):
 
         TODO: Now we require Python 2.6, switch to using warnings.catch_warnings
         """
-        warnings.simplefilter('always', PDBConstructionWarning)
-        try:
-            # Equivalent to warnings.catch_warnings -- hackmagic
-            orig_showwarning = warnings.showwarning
-            all_warns = []
 
-            def showwarning(*args, **kwargs):
-                all_warns.append(args[0])
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter('always', PDBConstructionWarning)
 
-            warnings.showwarning = showwarning
             # Trigger warnings
             p = PDBParser(PERMISSIVE=True)
             p.get_structure("example", "PDB/a_structure.pdb")
-            self.assertEqual(len(all_warns), 14)
-            for wrn, msg in zip(all_warns, [
+
+            self.assertEqual(len(w), 14)
+            for wrn, msg in zip(w, [
               # Expected warning messages:
               "Used element 'N' for Atom (name=N) with given element ''",
               "Used element 'C' for Atom (name=CA) with given element ''",
@@ -87,8 +82,7 @@ class A_ExceptionTest(unittest.TestCase):
               'Atom O defined twice in residue <Residue HOH het=W resseq=67 icode= > at line 822.'
               ]):
                 self.assertTrue(msg in str(wrn), str(wrn))
-        finally:
-            warnings.showwarning = orig_showwarning
+
 
     def test_2_strict(self):
         """Check error: Parse a flawed PDB file in strict mode."""
@@ -702,7 +696,7 @@ class ParseReal(unittest.TestCase):
     def test_model_numbering(self):
         """Preserve model serial numbers during I/O."""
         def confirm_numbering(struct):
-            self.assertEqual(len(struct), 20)
+            self.assertEqual(len(struct), 3)
             for idx, model in enumerate(struct):
                 self.assertEqual(model.serial_num, idx + 1)
                 self.assertEqual(model.serial_num, model.id + 1)
@@ -717,8 +711,8 @@ class ParseReal(unittest.TestCase):
             self.assertEqual(len(end_stment), 1) # Only one?
             self.assertEqual(end_stment[0][1], iline) # Last line of the file?
 
-        parser = PDBParser()
-        struct1 = parser.get_structure("1mot", "PDB/1MOT.pdb")
+        parser = PDBParser(QUIET=1)
+        struct1 = parser.get_structure("1lcd", "PDB/1LCD.pdb")
         confirm_numbering(struct1)
 
         # Round trip: serialize and parse again
@@ -728,7 +722,7 @@ class ParseReal(unittest.TestCase):
         os.close(filenumber)
         try:
             io.save(filename)
-            struct2 = parser.get_structure("1mot", filename)
+            struct2 = parser.get_structure("1lcd", filename)
             confirm_numbering(struct2)
             confirm_single_end(filename)
         finally:
