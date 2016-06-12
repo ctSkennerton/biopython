@@ -221,45 +221,91 @@ def _retrieve_dbxrefs(adaptor, primary_id):
 
 
 def _retrieve_features(adaptor, primary_id):
-    sql = "SELECT seqfeature_id, type.name, rank" \
+    def generate_placeholders(l):
+        """ Create a list of placeholder strings for an sql statement
+        """
+        placeholder= ['%s']
+        return ', '.join(placeholder * l)
+
+
+    def chunks(l, n):
+        """ Yield successive n-sized chunks from l.
+        """
+        for i in range(0, len(l), n):
+            yield l[i:i+n]
+
+    sql = "SELECT seqfeature_id, type.name" \
           " FROM seqfeature join term type on (type_term_id = type.term_id)" \
           " WHERE bioentry_id = %s" \
           " ORDER BY rank"
     results = adaptor.execute_and_fetchall(sql, (primary_id,))
+    seqfeatures = {}
     seq_feature_list = []
-    for seqfeature_id, seqfeature_type, seqfeature_rank in results:
+    for seqfeature_id, seqfeature_type in results:
+        feature = SeqFeature.SeqFeature(type=seqfeature_type)
+        # Store the key as a private property
+        feature._seqfeature_id = seqfeature_id
+        seq_feature_list.append(feature)
+        seqfeatures[seqfeature_id] = feature
+
+    for seqfeature_ids in chunks(seqfeatures.keys(), 900):
         # Get qualifiers [except for db_xref which is stored separately]
-        qvs = adaptor.execute_and_fetchall(
-            "SELECT name, value"
-            " FROM seqfeature_qualifier_value  join term using (term_id)"
-            " WHERE seqfeature_id = %s"
-            " ORDER BY rank", (seqfeature_id,))
-        qualifiers = {}
-        for qv_name, qv_value in qvs:
-            qualifiers.setdefault(qv_name, []).append(qv_value)
-        # Get db_xrefs [special case of qualifiers]
-        qvs = adaptor.execute_and_fetchall(
-            "SELECT dbxref.dbname, dbxref.accession"
-            " FROM dbxref join seqfeature_dbxref using (dbxref_id)"
-            " WHERE seqfeature_dbxref.seqfeature_id = %s"
-            " ORDER BY rank", (seqfeature_id,))
-        for qv_name, qv_value in qvs:
-            value = "%s:%s" % (qv_name, qv_value)
-            qualifiers.setdefault("db_xref", []).append(value)
+        qvs_sql = "SELECT seqfeature_id, name, value" \
+            " FROM seqfeature_qualifier_value join term using (term_id)" \
+            " WHERE seqfeature_id in ({})" \
+            " ORDER BY seqfeature_id, rank".format(generate_placeholders(len(seqfeature_ids)))
+        qvs = adaptor.execute_and_fetchall(qvs_sql, tuple(seqfeature_ids))
+
+        # get the db_xref which are a special case qualifier-value
+        dbxref_sql = "SELECT seqfeature_id, 'db_xref', dbxref.dbname || ':' || dbxref.accession" \
+            " FROM dbxref join seqfeature_dbxref using (dbxref_id)" \
+            " WHERE seqfeature_dbxref.seqfeature_id in ({})" \
+            " ORDER BY seqfeature_id, rank".format(generate_placeholders(len(seqfeature_ids)))
+        qvs.extend(adaptor.execute_and_fetchall(dbxref_sql, tuple(seqfeature_ids)))
+
+        for seqfeature_id, qv_name, qv_value in qvs:
+            try:
+                seqfeatures[seqfeature_id].qualifiers[qv_name].append(qv_value)
+            except TypeError:
+                # Bio.SeqFeature.SeqFeature defaults qualifiers to None so if there
+                # are no qualifiers at all will raise
+                seqfeatures[seqfeature_id].qualifiers = {qv_name: [qv_value]}
+            except KeyError:
+                seqfeatures[seqfeature_id].qualifiers[qv_name] = [qv_value]
+
+        # Get possible remote reference information
+        remote_location_sql = "SELECT location_id, dbname, accession, version" \
+            " FROM location join dbxref using (dbxref_id)" \
+            " WHERE seqfeature_id in ({})".format(generate_placeholders(len(seqfeature_ids)))
+        remote_results = adaptor.execute_and_fetchall(remote_location_sql, tuple(seqfeature_ids))
+        lookup = {}
+        for location_id, dbname, accession, version in remote_results:
+            if version and version != "0":
+                v = "%s.%s" % (accession, version)
+            else:
+                v = accession
+            # subfeature remote location db_ref are stored as a empty string when
+            # not present
+            if dbname == "":
+                dbname = None
+            lookup[location_id] = (dbname, v)
+
+        # seqfeature_id to list of location objects
+        seqfeature_id_to_locations = {}
+
         # Get locations
-        results = adaptor.execute_and_fetchall(
-            "SELECT location_id, start_pos, end_pos, strand"
-            " FROM location"
-            " WHERE seqfeature_id = %s"
-            " ORDER BY rank", (seqfeature_id,))
-        locations = []
+        location_sql = "SELECT seqfeature_id, location_id, start_pos, end_pos, strand" \
+            " FROM location" \
+            " WHERE seqfeature_id in ({})" \
+            " ORDER BY seqfeature_id, rank".format(generate_placeholders(len(seqfeature_ids)))
+        results = adaptor.execute_and_fetchall(location_sql, tuple(seqfeature_ids))
         # convert to Python standard form
         # Convert strand = 0 to strand = None
         # re: comment in Loader.py:
         # Biopython uses None when we don't know strand information but
         # BioSQL requires something (non null) and sets this as zero
         # So we'll use the strand or 0 if Biopython spits out None
-        for location_id, start, end, strand in results:
+        for seqfeature_id, location_id, start, end, strand in results:
             if start:
                 start -= 1
             if strand == 0:
@@ -273,74 +319,56 @@ def _retrieve_features(adaptor, primary_id):
                 warnings.warn("Inverted location start/end (%i and %i) for "
                               "seqfeature_id %s" % (start, end, seqfeature_id),
                               BiopythonWarning)
-            locations.append((location_id, start, end, strand))
-        # Get possible remote reference information
-        remote_results = adaptor.execute_and_fetchall(
-            "SELECT location_id, dbname, accession, version"
-            " FROM location join dbxref using (dbxref_id)"
-            " WHERE seqfeature_id = %s", (seqfeature_id,))
-        lookup = {}
-        for location_id, dbname, accession, version in remote_results:
-            if version and version != "0":
-                v = "%s.%s" % (accession, version)
-            else:
-                v = accession
-            # subfeature remote location db_ref are stored as a empty string when
-            # not present
-            if dbname == "":
-                dbname = None
-            lookup[location_id] = (dbname, v)
+            try:
+                seqfeature_id_to_locations[seqfeature_id].append((location_id,start, end, strand))
+            except KeyError:
+                seqfeature_id_to_locations[seqfeature_id] = []
+                seqfeature_id_to_locations[seqfeature_id].append((location_id,start, end, strand))
 
-        feature = SeqFeature.SeqFeature(type=seqfeature_type)
-        # Store the key as a private property
-        feature._seqfeature_id = seqfeature_id
-        feature.qualifiers = qualifiers
-        if len(locations) == 0:
-            pass
-        elif len(locations) == 1:
-            location_id, start, end, strand = locations[0]
-            # See Bug 2677, we currently don't record the location_operator
-            # For consistency with older versions Biopython, default to "".
-            feature.location_operator = \
-                _retrieve_location_qualifier_value(adaptor, location_id)
-            dbname, version = lookup.get(location_id, (None, None))
-            feature.location = SeqFeature.FeatureLocation(start, end)
-            feature.strand = strand
-            feature.ref_db = dbname
-            feature.ref = version
-        else:
-            sub_features = feature.sub_features
-            assert sub_features == []
-            for location in locations:
-                location_id, start, end, strand = location
+
+        for seqfeature_id, locations in seqfeature_id_to_locations.items():
+            if len(locations) == 0:
+                pass
+            elif len(locations) == 1:
+                location_id, start, end, strand = locations[0]
+                # See Bug 2677, we currently don't record the location_operator
+                # For consistency with older versions Biopython, default to "".
+                feature.location_operator = \
+                    _retrieve_location_qualifier_value(adaptor, location_id)
                 dbname, version = lookup.get(location_id, (None, None))
-                subfeature = SeqFeature.SeqFeature()
-                subfeature.type = seqfeature_type
-                subfeature.location = SeqFeature.FeatureLocation(start, end)
-                # subfeature.location_operator = \
-                #    _retrieve_location_qualifier_value(adaptor, location_id)
-                subfeature.strand = strand
-                subfeature.ref_db = dbname
-                subfeature.ref = version
-                sub_features.append(subfeature)
-            # Locations are in order, but because of remote locations for
-            # sub-features they are not necessarily in numerical order:
-            strands = set(sf.strand for sf in sub_features)
-            if len(strands) == 1 and -1 in strands:
-                # Evil hack time for backwards compatibility
-                # TODO - Check if BioPerl and (old) Biopython did the same,
-                # we may have an existing incompatibility lurking here...
-                locs = [f.location for f in sub_features[::-1]]
+                seqfeatures[seqfeature_id].location = SeqFeature.FeatureLocation(start, end, strand, version, dbname)
             else:
-                # All forward, or mixed strands
-                locs = [f.location for f in sub_features]
-            feature.location = SeqFeature.CompoundLocation(
-                locs, seqfeature_type)
-            # TODO - See Bug 2677 - we don't yet record location_operator,
-            # so for consistency with older versions of Biopython default
-            # to assuming its a join.
-            feature.location_operator = "join"
-        seq_feature_list.append(feature)
+                sub_features = seqfeatures[seqfeature_id].sub_features
+                assert sub_features == []
+                for location in locations:
+                    location_id, start, end, strand = location
+                    dbname, version = lookup.get(location_id, (None, None))
+                    subfeature = SeqFeature.SeqFeature()
+                    subfeature.type = seqfeatures[seqfeature_id].type
+                    subfeature.location = SeqFeature.FeatureLocation(start, end)
+                    # subfeature.location_operator = \
+                    #    _retrieve_location_qualifier_value(adaptor, location_id)
+                    subfeature.strand = strand
+                    subfeature.ref_db = dbname
+                    subfeature.ref = version
+                    sub_features.append(subfeature)
+                # Locations are in order, but because of remote locations for
+                # sub-features they are not necessarily in numerical order:
+                strands = set(sf.strand for sf in sub_features)
+                if len(strands) == 1 and -1 in strands:
+                    # Evil hack time for backwards compatibility
+                    # TODO - Check if BioPerl and (old) Biopython did the same,
+                    # we may have an existing incompatibility lurking here...
+                    locs = [f.location for f in sub_features[::-1]]
+                else:
+                    # All forward, or mixed strands
+                    locs = [f.location for f in sub_features]
+                seqfeatures[seqfeature_id].location = SeqFeature.CompoundLocation(
+                    locs, seqfeatures[seqfeature_id].type)
+                # TODO - See Bug 2677 - we don't yet record location_operator,
+                # so for consistency with older versions of Biopython default
+                # to assuming its a join.
+                seqfeatures[seqfeature_id].location_operator = "join"
 
     return seq_feature_list
 
