@@ -98,10 +98,12 @@ class TaxonTree(object):
         right_rows = sorted(right_rows, key=lambda x: x[0], reverse=rev)
         left_rows = sorted(left_rows, key=lambda x: x[0], reverse=rev)
         for row in left_rows:
-            self.adaptor.execute("UPDATE taxon SET left_value = %s WHERE taxon_id = %s",  row)
+            self.adaptor.execute("UPDATE taxon SET left_value = %s"
+                                 " WHERE taxon_id = %s", row)
 
         for row in right_rows:
-            self.adaptor.execute("UPDATE taxon SET right_value = %s WHERE taxon_id = %s", row)
+            self.adaptor.execute("UPDATE taxon SET right_value = %s"
+                                 " WHERE taxon_id = %s", row)
 
     def _make_node(self, _id):
         taxon_sql = '''SELECT taxon_id,
@@ -117,12 +119,12 @@ class TaxonTree(object):
 
         name_sql = 'SELECT name, name_class FROM taxon_name WHERE taxon_id = %s'
 
-        taxon_info = self.adaptor.execute_one(sql, (_id,))
+        taxon_info = self.adaptor.execute_one(taxon_sql, (_id,))
         if not taxon_info:
             raise NotFoundError('No node with id:{0}'.format(_id))
         else:
             name_dict = {}
-            name_info = self.adaptor.execute_and_fetchall(sql, (_id,))
+            name_info = self.adaptor.execute_and_fetchall(name_sql, (_id,))
             for name, name_class in name_info.items():
                 try:
                     name_dict[name_class].append(name)
@@ -136,29 +138,41 @@ class TaxonTree(object):
                     # Maybe warn here that there is no scientific name set
                     pass
             return TaxonNode(self.adaptor, taxon_info[0], taxon_info[2],
-                            taxon_info[1], taxon_name, rank=taxon_info[3],
-                            genetic_code=taxon_info[4], mito_genetic_code=taxon_info[5],
-                            left_val=taxon_info[6], right_val=taxon_info[7], **name_dict)
+                             taxon_info[1], taxon_name, rank=taxon_info[3],
+                             genetic_code=taxon_info[4], mito_genetic_code=taxon_info[5],
+                             left_val=taxon_info[6], right_val=taxon_info[7], **name_dict)
 
-
-    def find_elements(self, target=None, terminal=None, ncbi_taxon_id=None, name=None, name_class=None):
+    def find_elements(self, target=None, terminal=None,
+                      ncbi_taxon_id=None, name=None, name_class=None):
         """ Find all nodes in the tree that satisfy the arguments given.
 
             If there are no arguments given then a ValueError is raised
 
             :Parameters:
-                terminal : 
+                terminal :
                 ncbi_taxon_id : An NCBI taxonomy id
                 name : The name of the taxon
-                name_class : the type of name. The most common types are 'scientific name' or 'synonym'
+                name_class : the type of name. The most common types
+                are 'scientific name' or 'synonym'
         """
-        if not (ncbi_taxon_id and name and name_class):
-            raise ValueError("Please specify at least one of ncbi_taxon_id, name or name_class to filter on")
+        if not (ncbi_taxon_id or name or name_class):
+            raise ValueError("Please specify at least one of ncbi_taxon_id,"
+                             " name or name_class to filter on")
 
-    def add(self, name, name_class, rank=None, genetic_code=None, mito_genetic_code=None, ncbi_taxon_id=None, parent = None):
+        if name:
+            sql = 'SELECT DISTINCT taxon_id FROM taxon_name WHERE name = %s'
+            rows = self.adaptor.execute_and_fetch_col0(sql, (name,))
+        elif ncbi_taxon_id:
+            sql = 'SELECT taxon_id FROM taxon WHERE ncbi_taxon_id = %s'
+            rows = self.adaptor.execute_and_fetch_col0(sql, (ncbi_taxon_id,))
+
+        return [self._make_node(x) for x in rows]
+
+    def add(self, name, name_class, rank=None, genetic_code=None,
+            mito_genetic_code=None, ncbi_taxon_id=None, parent=None):
 
         if parent and isinstance(parent, TaxonNode):
-            prev   = parent._left_val
+            prev = parent._left_val
             self._update_left_right_taxon_values(prev, 2)
         else:
             prev = self.adaptor.execute_one("SELECT MAX(left_value) FROM taxon")[0]
@@ -166,9 +180,12 @@ class TaxonTree(object):
         if not prev:
             prev = 0
 
-        sql = 'INSERT INTO taxon(parent_taxon_id, left_value, right_value, node_rank, mito_genetic_code, genetic_code, ncbi_taxon_id) VALUES(%s, %s, %s, %s, %s, %s, %s)'
+        sql = 'INSERT INTO taxon(parent_taxon_id, left_value, right_value,'\
+              ' node_rank, mito_genetic_code, genetic_code, ncbi_taxon_id) '\
+              'VALUES(%s, %s, %s, %s, %s, %s, %s)'
 
-        self.adaptor.execute(sql, (parent._id, prev + 1, prev + 2, rank, mito_genetic_code, genetic_code, ncbi_taxon_id))
+        self.adaptor.execute(sql, (parent._id, prev + 1, prev + 2, rank,
+                                   mito_genetic_code, genetic_code, ncbi_taxon_id))
         taxon_id = self.adaptor.last_id("taxon")
 
         sql = 'INSERT INTO taxon_name(taxon_id, name, name_class) VALUES(%s, %s, %s)'
@@ -183,11 +200,11 @@ class TaxonTree(object):
         sql = 'DELETE FROM taxon WHERE left_value BETWEEN %s AND %s'
         self.adaptor.execute(sql, (node._left_val, node._right_val))
 
-        self._update_left_right_taxon_values(node._right_val, node._left_val - node._right_val - 1)
-
+        self._update_left_right_taxon_values(node._right_val,
+                                             node._left_val - node._right_val - 1)
 
     def move(self, node, parent):
-        prev   = parent._left_val
+        prev = parent._left_val
 
         if parent._id == node._id:
             raise IntegrityError('Cannot move node into self')
@@ -203,7 +220,7 @@ class TaxonTree(object):
         # re-fetch node and prev value since could be changed
         node = self._make_node(id)
         target = self.get_node(parent)
-        prev   = target['left_value']
+        prev = target['left_value']
 
         sql = '''
             UPDATE taxon
@@ -215,10 +232,12 @@ class TaxonTree(object):
         self.adaptor.execute(sql, (offset, offset, node['left_value'], node['right_value']))
 
         # shift nodes on the width of moving subtree, like in remove()
-        self._update_left_right_taxon_values(node['right_value'], node['left_value'] - node['right_value'] - 1)
+        self._update_left_right_taxon_values(node['right_value'],
+                                             node['left_value'] - node['right_value'] - 1)
 
     def get_root(self):
-        sql = 'SELECT taxon_id FROM taxon WHERE parent_taxon_id IS NULL OR parent_taxon_id = taxon_id'
+        sql = 'SELECT taxon_id FROM taxon WHERE parent_taxon_id IS NULL'\
+              ' OR parent_taxon_id = taxon_id'
 
         results = self.adaptor.execute_and_fetchall(sql)
 
@@ -231,7 +250,9 @@ class TaxonTree(object):
 
 
     def get_parent(self, id):
-        sql = 'SELECT taxon_id FROM taxon n JOIN taxon p ON n.parent_taxon_id = p.taxon_id WHERE n.taxon_id = %s'
+        sql = 'SELECT taxon_id FROM taxon n '\
+              'JOIN taxon p ON n.parent_taxon_id = p.taxon_id '\
+              'WHERE n.taxon_id = %s'
 
         result = self.adaptor.execute_one(sql, (id,))
 
@@ -241,7 +262,9 @@ class TaxonTree(object):
             return self.get_node(result[0])
 
     def get_next(self, id):
-        sql = 'SELECT taxon_id FROM taxon n JOIN taxon s ON n.right_value + 1 = s.left_value AND n.parent_taxon_id = s.parent_taxon_id WHERE n.taxon_id = %s'
+        sql = 'SELECT taxon_id FROM taxon n '\
+              'JOIN taxon s ON n.right_value + 1 = s.left_value '\
+              'AND n.parent_taxon_id = s.parent_taxon_id WHERE n.taxon_id = %s'
 
         result = self.adaptor.execute_one(sql, (id,))
 
@@ -251,7 +274,9 @@ class TaxonTree(object):
             return self.get_node(result[0])
 
     def get_previous(self, id):
-        sql = 'SELECT taxon_id FROM taxon n JOIN taxon s ON n.left_value - 1 = s.right_value AND n.parent_taxon_id = s.parent_taxon_id WHERE n.taxon_d = %s'
+        sql = 'SELECT taxon_id FROM taxon n '\
+              'JOIN taxon s ON n.left_value - 1 = s.right_value '\
+              'AND n.parent_taxon_id = s.parent_taxon_id WHERE n.taxon_d = %s'
 
         result = self.adaptor.execute_one(sql, (id,))
 
@@ -261,21 +286,29 @@ class TaxonTree(object):
             return self.get_node(result[0])
 
     def get_path(self, id):
-        sql = 'SELECT taxon_id FROM taxon n JOIN taxon a ON a.left_value <= n.left_value AND a.right_value >= n.right_value WHERE n.taxon_id = %s ORDER BY a.left_value ASC'
+        sql = 'SELECT taxon_id FROM taxon n '\
+              'JOIN taxon a ON a.left_value <= n.left_value '\
+              'AND a.right_value >= n.right_value '\
+              'WHERE n.taxon_id = %s ORDER BY a.left_value ASC'\
 
         results = self.adaptor.execute_and_fetch_col0(sql, (id,))
 
         return list(map(self.get_node, results))
 
     def get_children(self, id):
-        sql = 'SELECT taxon_id FROM taxon n JOIN taxon c ON n.taxon_id = c.parent_taxon_id WHERE n.taxon_id = %s ORDER BY c.left_value ASC'
+        sql = 'SELECT taxon_id FROM taxon n '\
+              'JOIN taxon c ON n.taxon_id = c.parent_taxon_id '\
+              'WHERE n.taxon_id = %s ORDER BY c.left_value ASC'
 
         results = self.adaptor.execute_and_fetch_col0(sql, (id,))
 
         return list(map(self.get_node, results))
 
     def get_descendants(self, id):
-        sql = 'SELECT taxon_id FROM taxon d JOIN taxon n ON d.left_value BETWEEN n.left_value + 1 AND n.right_value - 1 WHERE n.taxon_id = %s ORDER BY d.left_value ASC'
+        sql = 'SELECT taxon_id FROM taxon d '\
+              'JOIN taxon n ON d.left_value BETWEEN n.left_value + 1 '\
+              'AND n.right_value - 1 '\
+              'WHERE n.taxon_id = %s ORDER BY d.left_value ASC'
 
         results = self.adaptor.execute_and_fetch_col0(sql, (id,))
 
@@ -285,7 +318,8 @@ class TaxonTree(object):
         parent = self.get_node(parentId)
         descendant = self.get_node(descendantId)
 
-        return parent['left_value'] < descendant['left_value'] and parent['right_value'] > descendant['right_value']
+        return parent['left_value'] < descendant['left_value'] and \
+               parent['right_value'] > descendant['right_value']
 
     def isLeaf(self, id):
         node = self.get_node(id)
@@ -294,7 +328,9 @@ class TaxonTree(object):
 
     def visualize(self, name='name'):
         sql = '''
-           SELECT node.taxon_id, node.parent_taxon_id, node.left_value, node.right_value, taxon_name.name || ' (' || node.node_rank || ')', COUNT(*)
+           SELECT node.taxon_id, node.parent_taxon_id,
+           node.left_value, node.right_value,
+           taxon_name.name || ' (' || node.node_rank || ')', COUNT(*)
            FROM taxon root
            JOIN taxon node ON node.left_value BETWEEN root.left_value AND root.right_value
            JOIN taxon_name ON node.taxon_id = taxon_name.taxon_id
