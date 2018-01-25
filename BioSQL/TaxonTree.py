@@ -5,31 +5,12 @@ class NotFoundError(Exception):
 class IntegrityError(Exception):
     '''Raised when tree is broken'''
 
-class DBClade(TreeElement, TreeMixin):
-    def __init__(self, adaptor, taxon_id, parent_id, ncbi_id, name, left_val, right_val, branch_length=None, name=None, clades=None,
-            confidence=None, color=None, width=None):
-        """Define parameters for the Clade tree."""
-        self.branch_length = branch_length
-        self.name = name
-        self.clades = clades or []
-        self.confidence = confidence
-        self.color = color
-        self.width = width
-        self.ncbi_id = ncbi_id
-        self.name = name
-        # the following are private used for SQL queries
-        self._adaptor = adaptor
-        self._id = taxon_id
-        self._parent_id = parent_id
-        self._left_val = left_val
-        self._right_val = right_val
-
-    def is_terminal(self):
-        return self._right_val - self._left_val == 1
-
 
 class TaxonNode(object):
-    def __init__(self, adaptor, taxon_id, parent_id, ncbi_id, name=None, rank=None, genetic_code=None, mito_genetic_code=None, left_val=None, right_val=None, **kwargs):
+    def __init__(self, adaptor, taxon_id, parent_id, ncbi_id,
+                 name=None, rank=None, genetic_code=None,
+                 mito_genetic_code=None, left_val=None,
+                 right_val=None, **kwargs):
         ''' Initialize a specific node in the tree.
 
             Normally a user would not need to construct these objects
@@ -113,7 +94,7 @@ class TaxonTree(object):
                         genetic_code,
                         mito_genetic_code,
                         left_value,
-                        right_value,
+                        right_value
                   FROM taxon
                   WHERE taxon_id = %s'''
 
@@ -125,7 +106,7 @@ class TaxonTree(object):
         else:
             name_dict = {}
             name_info = self.adaptor.execute_and_fetchall(name_sql, (_id,))
-            for name, name_class in name_info.items():
+            for name, name_class in name_info:
                 try:
                     name_dict[name_class].append(name)
                 except KeyError:
@@ -218,9 +199,9 @@ class TaxonTree(object):
         self.adaptor.execute(sql, (parent._id, node._id))
 
         # re-fetch node and prev value since could be changed
-        node = self._make_node(id)
-        target = self.get_node(parent)
-        prev = target['left_value']
+        node = self._make_node(node._id)
+        target = self._make_node(parent._id)
+        prev = target._left_val
 
         sql = '''
             UPDATE taxon
@@ -228,12 +209,12 @@ class TaxonTree(object):
             left_value  = left_value + %s
             WHERE left_value > %s - 1 AND right_value < %s + 1
         '''
-        offset = prev - node['left_value'] + 1
-        self.adaptor.execute(sql, (offset, offset, node['left_value'], node['right_value']))
+        offset = prev - node._left_val + 1
+        self.adaptor.execute(sql, (offset, offset, node._left_val, node._right_val))
 
         # shift nodes on the width of moving subtree, like in remove()
-        self._update_left_right_taxon_values(node['right_value'],
-                                             node['left_value'] - node['right_value'] - 1)
+        self._update_left_right_taxon_values(node._right_val,
+                                             node._left_val - node._right_val - 1)
 
     def get_root(self):
         sql = 'SELECT taxon_id FROM taxon WHERE parent_taxon_id IS NULL'\
@@ -247,7 +228,6 @@ class TaxonTree(object):
             raise IntegrityError("Multiple root nodes detected")
         else:
             return self.get_node(results[0][0])
-
 
     def get_parent(self, id):
         sql = 'SELECT taxon_id FROM taxon n '\
@@ -314,12 +294,10 @@ class TaxonTree(object):
 
         return list(map(self.get_node, results))
 
-    def is_descendant(self, parentId, descendantId):
-        parent = self.get_node(parentId)
-        descendant = self.get_node(descendantId)
+    def is_descendant(self, parent, descendant):
 
-        return parent['left_value'] < descendant['left_value'] and \
-               parent['right_value'] > descendant['right_value']
+        return parent._left_val < descendant._left_val and \
+            parent._right_val > descendant._right_val
 
     def isLeaf(self, id):
         node = self.get_node(id)
