@@ -1254,17 +1254,17 @@ class TaxonTreeTest(unittest.TestCase):
                 (11, 10, 18, 19)
                 ]
         names = [
-                (1, 'one', 'scientific_name'),
-                (2, 'two', 'scientific_name'),
-                (3, 'three', 'scientific_name'),
-                (4, 'four', 'scientific_name'),
-                (5, 'five', 'scientific_name'),
-                (6, 'six', 'scientific_name'),
-                (7, 'seven', 'scientific_name'),
-                (8, 'eight', 'scientific_name'),
-                (9, 'nine', 'scientific_name'),
-                (10, 'ten', 'scientific_name'),
-                (11, 'eleven', 'scientific_name')
+                (1, 'one', 'scientific name'),
+                (2, 'two', 'scientific name'),
+                (3, 'three', 'scientific name'),
+                (4, 'four', 'scientific name'),
+                (5, 'five', 'scientific name'),
+                (6, 'six', 'scientific name'),
+                (7, 'seven', 'scientific name'),
+                (8, 'eight', 'scientific name'),
+                (9, 'nine', 'scientific name'),
+                (10, 'ten', 'scientific name'),
+                (11, 'eleven', 'scientific name')
                 ]
         insert_nodes = 'INSERT INTO taxon(taxon_id, parent_taxon_id, left_value, right_value) VALUES(%s, %s, %s, %s)'
         insert_names = 'INSERT INTO taxon_name(taxon_id, name, name_class) VALUES(%s, %s, %s)'
@@ -1392,3 +1392,7 @@ class TaxonTreeTest(unittest.TestCase):
         other_four = self.taxon_tree.find_elements(name='four')[0]
         with self.assertRaises(IntegrityError):
             self.taxon_tree.move(four, other_four)
+
+    def test_print(self):
+        """test printing of tree"""
+        print(self.taxon_tree, file=sys.stderr)

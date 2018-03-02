@@ -1,9 +1,72 @@
 class NotFoundError(Exception):
-    '''Raised when node was not found'''
+    '''Raised when node was not found.'''
+    pass
 
 
 class IntegrityError(Exception):
-    '''Raised when tree is broken'''
+    '''Raised when tree is broken.'''
+    pass
+
+#class TaxonMixin(object):
+
+
+    #def get_parent(self, id):
+    #    sql = 'SELECT taxon_id FROM taxon n '\
+    #          'JOIN taxon p ON n.parent_taxon_id = p.taxon_id '\
+    #          'WHERE n.taxon_id = %s'
+
+    #    result = self.adaptor.execute_one(sql, (id,))
+
+    #    if not result:
+    #        raise NotFoundError('No parent node for id:{0}'.format(id))
+    #    else:
+    #        return self.get_node(result[0])
+
+    #def get_next(self, id):
+    #    sql = 'SELECT taxon_id FROM taxon n '\
+    #          'JOIN taxon s ON n.right_value + 1 = s.left_value '\
+    #          'AND n.parent_taxon_id = s.parent_taxon_id WHERE n.taxon_id = %s'
+
+    #    result = self.adaptor.execute_one(sql, (id,))
+
+    #    if not result:
+    #        raise NotFoundError('No right sibling node for id:{0}'.format(id))
+    #    else:
+    #        return self.get_node(result[0])
+
+    #def get_previous(self, id):
+    #    sql = 'SELECT taxon_id FROM taxon n '\
+    #          'JOIN taxon s ON n.left_value - 1 = s.right_value '\
+    #          'AND n.parent_taxon_id = s.parent_taxon_id WHERE n.taxon_d = %s'
+
+    #    result = self.adaptor.execute_one(sql, (id,))
+
+    #    if not result:
+    #        raise NotFoundError('No left sibling node for id:{0}'.format(id))
+    #    else:
+    #        return self.get_node(result[0])
+
+
+    #def get_children(self, id):
+    #    sql = 'SELECT taxon_id FROM taxon n '\
+    #          'JOIN taxon c ON n.taxon_id = c.parent_taxon_id '\
+    #          'WHERE n.taxon_id = %s ORDER BY c.left_value ASC'
+
+    #    results = self.adaptor.execute_and_fetch_col0(sql, (id,))
+
+    #    return list(map(self.get_node, results))
+
+    #def get_descendants(self, id):
+    #    sql = 'SELECT taxon_id FROM taxon d '\
+    #          'JOIN taxon n ON d.left_value BETWEEN n.left_value + 1 '\
+    #          'AND n.right_value - 1 '\
+    #          'WHERE n.taxon_id = %s ORDER BY d.left_value ASC'
+
+    #    results = self.adaptor.execute_and_fetch_col0(sql, (id,))
+
+    #    return list(map(self.get_node, results))
+
+
 
 
 class TaxonNode(object):
@@ -41,8 +104,7 @@ class TaxonTree(object):
         self.adaptor = adaptor
 
     def _update_left_right_taxon_values(self, left_value, width):
-        """update the left and right values in the table
-        """
+        """Update the left and right values in the table."""
         # Due to the UNIQUE constraint on the left and right values in the taxon
         # table we cannot simply update them through an SQL statement as we risk
         # colliding values. Instead we must select all of the rows that we want to
@@ -125,16 +187,16 @@ class TaxonTree(object):
 
     def find_elements(self, target=None, terminal=None,
                       ncbi_taxon_id=None, name=None, name_class=None):
-        """ Find all nodes in the tree that satisfy the arguments given.
+        """Find all nodes in the tree that satisfy the arguments given.
 
-            If there are no arguments given then a ValueError is raised
+           If there are no arguments given then a ValueError is raised
 
-            :Parameters:
-                terminal :
-                ncbi_taxon_id : An NCBI taxonomy id
-                name : The name of the taxon
-                name_class : the type of name. The most common types
-                are 'scientific name' or 'synonym'
+           :Parameters:
+               terminal :
+               ncbi_taxon_id : An NCBI taxonomy id
+               name : The name of the taxon
+               name_class : the type of name. The most common types
+               are 'scientific name' or 'synonym'
         """
         if not (ncbi_taxon_id or name or name_class):
             raise ValueError("Please specify at least one of ncbi_taxon_id,"
@@ -178,6 +240,9 @@ class TaxonTree(object):
         if not isinstance(node, TaxonNode):
             raise ValueError("You must pass in a valid TaxonNode object")
 
+        # refetch the node as if any move operration has occurred the left and
+        # right values may not be correct anymore
+        node = self._make_node(node._id)
         sql = 'DELETE FROM taxon WHERE left_value BETWEEN %s AND %s'
         self.adaptor.execute(sql, (node._left_val, node._right_val))
 
@@ -216,6 +281,11 @@ class TaxonTree(object):
         self._update_left_right_taxon_values(node._right_val,
                                              node._left_val - node._right_val - 1)
 
+    def is_descendant(self, parent, descendant):
+
+        return parent._left_val < descendant._left_val and \
+            parent._right_val > descendant._right_val
+
     def get_root(self):
         sql = 'SELECT taxon_id FROM taxon WHERE parent_taxon_id IS NULL'\
               ' OR parent_taxon_id = taxon_id'
@@ -227,45 +297,9 @@ class TaxonTree(object):
         elif len(results) > 1:
             raise IntegrityError("Multiple root nodes detected")
         else:
-            return self.get_node(results[0][0])
+            return self._make_node(results[0][0])
 
-    def get_parent(self, id):
-        sql = 'SELECT taxon_id FROM taxon n '\
-              'JOIN taxon p ON n.parent_taxon_id = p.taxon_id '\
-              'WHERE n.taxon_id = %s'
-
-        result = self.adaptor.execute_one(sql, (id,))
-
-        if not result:
-            raise NotFoundError('No parent node for id:{0}'.format(id))
-        else:
-            return self.get_node(result[0])
-
-    def get_next(self, id):
-        sql = 'SELECT taxon_id FROM taxon n '\
-              'JOIN taxon s ON n.right_value + 1 = s.left_value '\
-              'AND n.parent_taxon_id = s.parent_taxon_id WHERE n.taxon_id = %s'
-
-        result = self.adaptor.execute_one(sql, (id,))
-
-        if not result:
-            raise NotFoundError('No right sibling node for id:{0}'.format(id))
-        else:
-            return self.get_node(result[0])
-
-    def get_previous(self, id):
-        sql = 'SELECT taxon_id FROM taxon n '\
-              'JOIN taxon s ON n.left_value - 1 = s.right_value '\
-              'AND n.parent_taxon_id = s.parent_taxon_id WHERE n.taxon_d = %s'
-
-        result = self.adaptor.execute_one(sql, (id,))
-
-        if not result:
-            raise NotFoundError('No left sibling node for id:{0}'.format(id))
-        else:
-            return self.get_node(result[0])
-
-    def get_path(self, id):
+    def get_path(self, node):
         sql = 'SELECT taxon_id FROM taxon n '\
               'JOIN taxon a ON a.left_value <= n.left_value '\
               'AND a.right_value >= n.right_value '\
@@ -273,42 +307,14 @@ class TaxonTree(object):
 
         results = self.adaptor.execute_and_fetch_col0(sql, (id,))
 
-        return list(map(self.get_node, results))
+        return list(map(self._make_node, results))
 
-    def get_children(self, id):
-        sql = 'SELECT taxon_id FROM taxon n '\
-              'JOIN taxon c ON n.taxon_id = c.parent_taxon_id '\
-              'WHERE n.taxon_id = %s ORDER BY c.left_value ASC'
+    def __str__(self):
 
-        results = self.adaptor.execute_and_fetch_col0(sql, (id,))
-
-        return list(map(self.get_node, results))
-
-    def get_descendants(self, id):
-        sql = 'SELECT taxon_id FROM taxon d '\
-              'JOIN taxon n ON d.left_value BETWEEN n.left_value + 1 '\
-              'AND n.right_value - 1 '\
-              'WHERE n.taxon_id = %s ORDER BY d.left_value ASC'
-
-        results = self.adaptor.execute_and_fetch_col0(sql, (id,))
-
-        return list(map(self.get_node, results))
-
-    def is_descendant(self, parent, descendant):
-
-        return parent._left_val < descendant._left_val and \
-            parent._right_val > descendant._right_val
-
-    def isLeaf(self, id):
-        node = self.get_node(id)
-
-        return node['right_value'] - node['left_left'] == 1
-
-    def visualize(self, name='name'):
         sql = '''
            SELECT node.taxon_id, node.parent_taxon_id,
            node.left_value, node.right_value,
-           taxon_name.name || ' (' || node.node_rank || ')', COUNT(*)
+           taxon_name.name, node.node_rank, COUNT(*)
            FROM taxon root
            JOIN taxon node ON node.left_value BETWEEN root.left_value AND root.right_value
            JOIN taxon_name ON node.taxon_id = taxon_name.taxon_id
@@ -318,7 +324,17 @@ class TaxonTree(object):
            '''
 
         results = self.adaptor.execute_and_fetchall(sql)
+        lines = []
+        for taxon_id, parent_taxon_id, left_val, right_val, taxon_name, node_rank, count in results:
+            if parent_taxon_id != -1:
+               indent = u'  ' * (count - 2) + u'└─'
+            else:
+               indent = ''
 
-        return '\n'.join(u'{0}{1} {2} → {3} ({4}, {5})'.format(
-            u'  ' * (r[5] - 2) + u'└─' if r[1] else '', r[4], r[0], r[1], r[2], r[3]
-            ) for r in results)
+            if node_rank is None:
+                node_rank = 'undefined rank'
+
+            line = u'{0}{1} ({6}) {2} → {3} ({4}, {5})'.format(indent, taxon_name, taxon_id, parent_taxon_id, left_val, right_val, node_rank)
+            lines.append(line)
+
+        return '\n'.join(lines)
