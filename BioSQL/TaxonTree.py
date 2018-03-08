@@ -94,8 +94,22 @@ class TaxonNode(object):
         for key, value in kwargs.items():
             setattr(self, key, value)
 
+    def __str__(self):
+        return "name: {}\n"
+               "rank: {}\n"
+               "ncbi_tax: {}\n"
+               "id: {}\n"
+               "parent: {}\n"
+               "left_val: {}\n"
+               "right_val: {}".format(self.name, self.rank,
+                                      self.ncbi_id, self._id,
+                                      self._parent_id,
+                                      self._left_val, self._right_val)
+
     def is_terminal(self):
         return self._right_val - self._left_val == 1
+
+
 
 
 class TaxonTree(object):
@@ -220,6 +234,14 @@ class TaxonTree(object):
         else:
             prev = self.adaptor.execute_one("SELECT MAX(left_value) FROM taxon")[0]
 
+        sql = 'SELECT * from taxon LEFT JOIN taxon_name USING(taxon_id)'
+              ' WHERE taxon_name.name = %s AND parent_taxon_id = %s'
+        rows = self.adaptor.execute_and_fetchall(sql, (name, parent._id))
+        if len(rows):
+            raise IntegrityError("Attempting to add in {} as a child of {},\n"
+                                 "but there is already a taxon by that name. "
+                                 "Try instead to find the current taxon".format(name, parent.name))
+
         if not prev:
             prev = 0
 
@@ -250,6 +272,10 @@ class TaxonTree(object):
                                              node._left_val - node._right_val - 1)
 
     def move(self, node, parent):
+        # successive calls to move can cause the parent left and right values
+        # to change and therefore we need to make sure we are always using
+        # the most up to date values here
+        parent = self._make_node(parent._id)
         prev = parent._left_val
 
         if parent._id == node._id:
@@ -276,6 +302,7 @@ class TaxonTree(object):
         '''
         offset = prev - node._left_val + 1
         self.adaptor.execute(sql, (offset, offset, node._left_val, node._right_val))
+
 
         # shift nodes on the width of moving subtree, like in remove()
         self._update_left_right_taxon_values(node._right_val,
