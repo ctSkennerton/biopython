@@ -169,8 +169,10 @@ class KGMLCanvas:
         fig, ax = plt.subplots(figsize=(50,50))
         self.fig = fig
         self.ax = ax
-        self.ax.set_xlim(0, cwidth * (1 + 2 * self.margins[0]))
-        self.ax.set_ylim(cheight * (1 + 2 * self.margins[1]), 0)
+        #self.ax.set_xlim(0, cwidth * (1 + 2 * self.margins[0]))
+        #self.ax.set_ylim(cheight * (1 + 2 * self.margins[1]), 0)
+        self.ax.set_xlim(0, cwidth )
+        self.ax.set_ylim(cheight, 0)
         self.ax.set_axis_off()
         
 
@@ -234,7 +236,7 @@ class KGMLCanvas:
                     self.drawing.setFillColor("#888888")
                     self.__add_labels(g)
 
-    def __add_graphics(self, graphics):
+    def __add_graphics(self, graphics, **kwargs):
         """Add the passed graphics object to the map (PRIVATE).
 
         Add text, add after the graphics object, for sane Z-ordering.
@@ -270,7 +272,7 @@ class KGMLCanvas:
                 p.lineTo(x, y)
 
             path = Path(verts, codes)
-            patch = patches.PathPatch(path, facecolor='orange', lw=2)    
+            patch = patches.PathPatch(path, **kwargs)    
             self.ax.add_patch(patch)        
             self.drawing.drawPath(p)
             self.drawing.setLineWidth(1)  # Return to default
@@ -278,7 +280,7 @@ class KGMLCanvas:
         # rectangle/roundrectangle, but Reportlab uses the co-ordinates of the
         # lower-left corner for rectangle/elif.
         if graphics.type == "circle":
-            circ = patches.Circle((graphics.x, graphics.y), graphics.width)
+            circ = patches.Circle((graphics.x, graphics.y), graphics.width, **kwargs)
             self.ax.add_patch(circ)
             self.drawing.circle(
                 graphics.x, graphics.y, graphics.width * 0.5, stroke=1, fill=1
@@ -287,7 +289,7 @@ class KGMLCanvas:
             rrec = patches.FancyBboxPatch((graphics.x - graphics.width * 0.5,
                 graphics.y - graphics.height * 0.5),
                 graphics.width,
-                graphics.height)
+                graphics.height, **kwargs)
             self.ax.add_patch(rrec)
             self.drawing.roundRect(
                 graphics.x - graphics.width * 0.5,
@@ -302,7 +304,7 @@ class KGMLCanvas:
             rec = patches.Rectangle((graphics.x - graphics.width * 0.5,
                 graphics.y - graphics.height * 0.5),
                 graphics.width,
-                graphics.height)
+                graphics.height, **kwargs)
             self.ax.add_patch(rec)
             self.drawing.rect(
                 graphics.x - graphics.width * 0.5,
@@ -359,7 +361,7 @@ class KGMLCanvas:
             for g in ortholog.graphics:
                 self.drawing.setStrokeColor(color_to_reportlab(g.fgcolor))
                 self.drawing.setFillColor(color_to_reportlab(g.bgcolor))
-                self.__add_graphics(g)
+                self.__add_graphics(g, fc=g.bgcolor, ec=g.fgcolor)
                 if self.label_orthologs:
                     # We want the label color to be slightly darker
                     # (where possible), so it can be read
@@ -376,7 +378,7 @@ class KGMLCanvas:
             for g in reaction.graphics:
                 self.drawing.setStrokeColor(color_to_reportlab(g.fgcolor))
                 self.drawing.setFillColor(color_to_reportlab(g.bgcolor))
-                self.__add_graphics(g)
+                self.__add_graphics(g, fc=g.bgcolor, ec=g.fgcolor)
                 if self.label_reaction_entries:
                     # We want the label color to be slightly darker
                     # (where possible), so it can be read
@@ -394,7 +396,7 @@ class KGMLCanvas:
                     fillcolor.alpha *= self.non_reactant_transparency
                 self.drawing.setStrokeColor(color_to_reportlab(g.fgcolor))
                 self.drawing.setFillColor(fillcolor)
-                self.__add_graphics(g)
+                self.__add_graphics(g, fc=g.bgcolor, ec=g.fgcolor)
                 if self.label_compounds:
                     if not compound.is_reactant:
                         t = 0.3
@@ -409,7 +411,7 @@ class KGMLCanvas:
             for g in gene.graphics:
                 self.drawing.setStrokeColor(color_to_reportlab(g.fgcolor))
                 self.drawing.setFillColor(color_to_reportlab(g.bgcolor))
-                self.__add_graphics(g)
+                self.__add_graphics(g, fc=g.bgcolor, ec=g.fgcolor)
                 if self.label_compounds:
                     self.drawing.setFillColor(darken(g.fgcolor))
                     self.__add_labels(g)
