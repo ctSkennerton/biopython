@@ -40,6 +40,10 @@ from urllib.request import urlopen
 
 from Bio.KEGG.KGML.KGML_pathway import Pathway
 
+import matplotlib.pyplot as plt
+from matplotlib.path import Path
+import matplotlib.patches as patches
+import matplotlib.image as mpimg
 
 def darken(color, factor=0.7):
     """Return darkened color as a ReportLab RGB color.
@@ -152,12 +156,24 @@ class KGMLCanvas:
             else:
                 imfilename = get_temp_imagefilename(self.pathway.image)
             im = Image.open(imfilename)
+            # numpy array 
+            pixels = mpimg.imread(imfilename)
+            #print(pixels.shape)
             cwidth, cheight = im.size
         else:
             # No image, so we set the canvas size to accommodate visible
             # elements
             cwidth, cheight = (self.pathway.bounds[1][0], self.pathway.bounds[1][1])
         # Instantiate canvas
+
+        fig, ax = plt.subplots(figsize=(50,50))
+        self.fig = fig
+        self.ax = ax
+        self.ax.set_xlim(0, cwidth * (1 + 2 * self.margins[0]))
+        self.ax.set_ylim(cheight * (1 + 2 * self.margins[1]), 0)
+        self.ax.set_axis_off()
+        
+
         self.drawing = canvas.Canvas(
             filename,
             bottomup=0,
@@ -179,6 +195,8 @@ class KGMLCanvas:
             self.drawing.translate(0, -cheight)
             self.drawing.drawImage(imfilename, 0, 0)
             self.drawing.restoreState()
+
+            self.ax.imshow(pixels)
         # Add the reactions, compounds and maps
         # Maps go on first, to be overlaid by more information.
         # By default, they're slightly transparent.
@@ -223,26 +241,54 @@ class KGMLCanvas:
         """
         if graphics.type == "line":
             p = self.drawing.beginPath()
-            x, y = graphics.coords[0]
+            init_x, init_y = graphics.coords[0]
             # There are optional settings for lines that aren't necessarily
             # part of the KGML DTD
             if graphics.width is not None:
                 self.drawing.setLineWidth(graphics.width)
             else:
                 self.drawing.setLineWidth(1)
-            p.moveTo(x, y)
+            #p.moveTo(x, y)
+            verts = [
+            (init_x, init_y),  # left, bottom
+            #(0., 1.),  # left, top
+            #(1., 1.),  # right, top
+            #(1., 0.),  # right, bottom
+            #(0., 0.),  # ignored
+            ]
+
+            codes = [
+                Path.MOVETO,
+                #Path.LINETO,
+                #Path.LINETO,
+                #Path.LINETO,
+                #Path.CLOSEPOLY,
+            ]
             for (x, y) in graphics.coords:
+                codes.append(Path.LINETO)
+                verts.append((x,y))
                 p.lineTo(x, y)
+
+            path = Path(verts, codes)
+            patch = patches.PathPatch(path, facecolor='orange', lw=2)    
+            self.ax.add_patch(patch)        
             self.drawing.drawPath(p)
             self.drawing.setLineWidth(1)  # Return to default
         # KGML defines the (x, y) coordinates as the centre of the circle/
         # rectangle/roundrectangle, but Reportlab uses the co-ordinates of the
         # lower-left corner for rectangle/elif.
         if graphics.type == "circle":
+            circ = patches.Circle((graphics.x, graphics.y), graphics.width)
+            self.ax.add_patch(circ)
             self.drawing.circle(
                 graphics.x, graphics.y, graphics.width * 0.5, stroke=1, fill=1
             )
         elif graphics.type == "roundrectangle":
+            rrec = patches.FancyBboxPatch((graphics.x - graphics.width * 0.5,
+                graphics.y - graphics.height * 0.5),
+                graphics.width,
+                graphics.height)
+            self.ax.add_patch(rrec)
             self.drawing.roundRect(
                 graphics.x - graphics.width * 0.5,
                 graphics.y - graphics.height * 0.5,
@@ -253,6 +299,11 @@ class KGMLCanvas:
                 fill=1,
             )
         elif graphics.type == "rectangle":
+            rec = patches.Rectangle((graphics.x - graphics.width * 0.5,
+                graphics.y - graphics.height * 0.5),
+                graphics.width,
+                graphics.height)
+            self.ax.add_patch(rec)
             self.drawing.rect(
                 graphics.x - graphics.width * 0.5,
                 graphics.y - graphics.height * 0.5,
@@ -294,6 +345,7 @@ class KGMLCanvas:
             text = graphics.name
         else:
             text = graphics.name[:12] + "..."
+        self.ax.text(x, y, text, horizontalalignment='center', fontfamily=self.fontname, fontsize=self.fontsize)
         self.drawing.drawCentredString(x, y, text)
         self.drawing.setFont(self.fontname, self.fontsize)
 
